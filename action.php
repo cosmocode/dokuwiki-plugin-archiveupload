@@ -42,7 +42,11 @@ class action_plugin_archiveupload extends DokuWiki_Action_Plugin {
         $controller->register_hook('MEDIA_UPLOAD_FINISH', 'BEFORE', $this, 'handle_media_upload');
         $controller->register_hook('TPL_METAHEADER_OUTPUT', 'AFTER', $this, 'metaheaders_after');
     }
-
+    /**
+     * Disables new uploader in favor of old
+     * 
+     * @author Myron Turner <turnermm02@shaw.ca>
+     */
      function metaheaders_after(&$event, $param) {
             ptln( "\n<script type='text/javascript'>\n //<![CDATA[\n");
             ptln("qq = {};\n //]]>\n</script>");
