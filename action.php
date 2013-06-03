@@ -40,8 +40,13 @@ class action_plugin_archiveupload extends DokuWiki_Action_Plugin {
     function register(&$controller) {
         $controller->register_hook('HTML_UPLOADFORM_OUTPUT', 'BEFORE', $this, 'handle_form_output');
         $controller->register_hook('MEDIA_UPLOAD_FINISH', 'BEFORE', $this, 'handle_media_upload');
+        $controller->register_hook('TPL_METAHEADER_OUTPUT', 'AFTER', $this, 'metaheaders_after');
     }
 
+     function metaheaders_after(&$event, $param) {
+            ptln( "\n<script type='text/javascript'>\n //<![CDATA[\n");
+            ptln("qq = {};\n //]]>\n</script>");
+     }
     /**
      * Adds a checkbox
      * 
