@@ -1,0 +1,8 @@
+base  archiveupload
+author  Michael Klier, Myron Turner
+email  turnermm02@shaw.ca
+date   2013-06-3
+name   archiveupload
+desc   uncompress archived files into media directory
+url    https://www.dokuwiki.org/plugin:archiveupload 
+
