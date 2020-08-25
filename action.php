@@ -5,11 +5,6 @@
  * @license    GPL 2 (http://www.gnu.org/licenses/gpl.html)
  * @author     Michael Klier chi@chimeric.de
  */
-// must be run within Dokuwiki
-if(!defined('DOKU_INC')) die();
-
-if(!defined('DOKU_PLUGIN')) define('DOKU_PLUGIN',DOKU_INC.'lib/plugins/');
-require_once(DOKU_PLUGIN.'action.php');
 
 /**
  * DokuWiki Action Plugin Archive Upload
@@ -37,7 +32,7 @@ class action_plugin_archiveupload extends DokuWiki_Action_Plugin {
      /**
       * Registers our callback functions
       */
-    function register(&$controller) {
+    function register(Doku_Event_Handler $controller) {
         $controller->register_hook('HTML_UPLOADFORM_OUTPUT', 'BEFORE', $this, 'handle_form_output');
         $controller->register_hook('MEDIA_UPLOAD_FINISH', 'BEFORE', $this, 'handle_media_upload');
     }
