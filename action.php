@@ -146,9 +146,7 @@ class action_plugin_archiveupload extends DokuWiki_Action_Plugin {
      */
     function decompress($file, $target) {
 
-        // need to source plugin manager because otherwise the ZipLib doesn't work
-        // FIXME fix ZipLib.class.php
-        require_once(DOKU_INC.'lib/plugins/plugin/admin.php');
+        require_once(DOKU_INC.'lib/plugins/admin.php');
 
         // decompression library doesn't like target folders ending in "/"
         if(substr($target, -1) == "/") $target = substr($target, 0, -1);
@@ -176,16 +174,18 @@ class action_plugin_archiveupload extends DokuWiki_Action_Plugin {
 
         } else if ($ext == 'zip') {
 
-            require_once(DOKU_INC."inc/ZipLib.class.php");
+            require_once(DOKU_INC."/vendor/splitbrain/php-archive/src/Zip.php");
 
-            $zip = new ZipLib();
-            $ok  = $zip->Extract($file, $this->tmpdir);
-
-            if($ok) {
-                $files = $zip->get_List($file);
+            try {
+                $zip = new \splitbrain\PHPArchive\Zip();
+                $zip->open($file);
+                $zip->extract($this->tmpdir);
+                $zip->open($file);
+                $files = $zip->contents();
                 $this->postProcessFiles($target, $files);
                 return true;
-            } else {
+            } catch (\splitbrain\PHPArchive\ArchiveIOException $e) {
+                throw new Exception(' Error extracting the zip archive:'.$file.' to '.$this->tmpdir);
                 return false;
             }
 
@@ -217,11 +217,11 @@ class action_plugin_archiveupload extends DokuWiki_Action_Plugin {
         $tmp_dirs = array();
 
         foreach($files as $file) {
-            $fn_old = $file['filename'];                                // original filename
+            $fn_old = $file->getPath();                                // original filename
             $fn_new = str_replace('/',':',$fn_old);                     // target filename
             $fn_new = str_replace(':', '/', cleanID($fn_new));
 
-            if(substr($fn_old, -1) == '/') { 
+            if ($file->getIsdir()) {
                 // given file is a directory
                 io_mkdir_p($dir.'/'.$fn_new);
                 chmod($dir.'/'.$fn_new, $conf['dmode']);
