@@ -67,225 +67,99 @@ class action_plugin_archiveupload extends DokuWiki_Action_Plugin
         // nothing todo
         if (!isset($_REQUEST['unpack'])) return;
 
+        // only for managers?
         if ($this->getConf('manageronly')) {
             if (!$INFO['isadmin'] && !$INFO['ismanager']) return;
+        }
+
+        // get event data
+        list($tmp, $file, $id, $mime) = $event->data;
+
+        // only process known archives
+        if (!preg_match('/\.(tar|tar\.gz|tar\.bz2|tgz|tbz|zip)$/', $file)) {
+            return;
         }
 
         // our turn - prevent default action
         $event->preventDefault();
 
-        call_user_func_array(array($this, 'extract_archive'), $event->data);
+        // extract to tmp directory and copy files over
+        try {
+            $dir = $this->extractArchive($tmp, $mime);
+            $this->postProcessFiles($dir, getNS($id));
+            io_rmdir($dir, true);
+            msg($this->getLang('decompr_succ'), 1);
+        } catch (\Exception $e) {
+            msg(hsc($e->getMessage()), -1);
+            msg($this->getLang('decompr_err'), -1);
+        }
     }
 
     /**
-     * Uploads an extracts an archive
-     * FIXME add bz and bz2 support
+     * Extract the archive
      *
+     * @param string $tmp temporary file path
+     * @param string $mime mime type
+     * @return string The temporary directory of unpacked files
+     * @throws Exception
      * @author Michael Klier <chi@chimeric.de>
      */
-    protected function extract_archive($fn_tmp, $fn, $id, $imime)
+    protected function extractArchive($tmp, $mime)
     {
-        global $lang;
-        global $conf;
-
         $dir = io_mktmpdir();
-        if ($dir) {
-            $this->tmpdir = $dir;
-        } else {
-            msg('Failed to create tmp dir, check permissions of cache/ directory', -1);
-            return false;
+        if (!$dir) {
+            throw new \Exception('Failed to create tmp dir, check permissions of tmp/ directory');
         }
 
-        // failed to create tmp dir stop here
-        if (!$this->tmpdir) return false;
-
-        $ext = substr($fn, strrpos($fn, '.') + 1);
-
-        if (in_array($ext, array('tar', 'gz', 'tgz', 'zip'))) {
-
-            //prepare directory
-            //FIXME needed? do it later?
-            io_createNamespace($id, 'media');
-
-            if (move_uploaded_file($fn_tmp, $fn)) {
-
-                chmod($fn, $conf['fmode']);
-
-                if ($this->decompress($fn, dirname($fn))) {
-                    msg($this->getLang('decompr_succ'), 1);
-                } else {
-                    msg($this->getLang('decompr_err'), -1);
-                }
-
-                // delete archive after decompression
-                // fixme check for success?
-                unlink($fn);
-
-            } else {
-                msg($lang['uploadfail'], -1);
-            }
-
+        if ($mime === 'application/zip') {
+            $archive = new \splitbrain\PHPArchive\Zip();
         } else {
-            msg($this->getLang('unsupported_ftype'), -1);
-            return false;
+            $archive = new \splitbrain\PHPArchive\Tar();
         }
 
-        // remove tmpdir in any case
-        rmdir($this->tmpdir);
+        $archive->open($tmp);
+        $archive->extract($dir);
 
-        // fixme do a sweepNS here, just in case?
-    }
+        // delete the temporary upload
+        @unlink($tmp);
 
-    /**
-     * Decompress an archive (adopted from plugin manager)
-     *
-     * @author Christopher Smith <chris@jalakai.co.uk>
-     * @author Michael Klier <chi@chimeric.de>
-     */
-    protected function decompress($file, $target)
-    {
-
-        require_once(DOKU_INC . 'lib/plugins/admin.php');
-
-        // decompression library doesn't like target folders ending in "/"
-        if (substr($target, -1) == "/") $target = substr($target, 0, -1);
-
-        $ext = substr($file, strrpos($file, '.') + 1);
-
-        if (in_array($ext, array('tar', 'gz', 'tgz'))) {
-
-            require_once(DOKU_INC . "inc/TarLib.class.php");
-
-            if (strpos($ext, 'gz') !== false) {
-                $compress_type = COMPRESS_GZIP;
-            } //else if (strpos($ext,'bz') !== false) $compress_type = COMPRESS_BZIP; // FIXME bz2 support
-            else $compress_type = COMPRESS_NONE;
-
-            $tar = new TarLib($file, $compress_type);
-            $ok = $tar->Extract(FULL_ARCHIVE, $this->tmpdir, '', 0777);
-
-            if ($ok) {
-                $files = $tar->ListContents();
-                $this->postProcessFiles($target, $files);
-                return true;
-            } else {
-                return false;
-            }
-
-        } else {
-            if ($ext == 'zip') {
-
-                require_once(DOKU_INC . "/vendor/splitbrain/php-archive/src/Zip.php");
-
-                try {
-                    $zip = new \splitbrain\PHPArchive\Zip();
-                    $zip->open($file);
-                    $zip->extract($this->tmpdir);
-                    $zip->open($file);
-                    $files = $zip->contents();
-                    $this->postProcessFiles($target, $files);
-                    return true;
-                } catch (\splitbrain\PHPArchive\ArchiveIOException $e) {
-                    throw new Exception(' Error extracting the zip archive:' . $file . ' to ' . $this->tmpdir);
-                    return false;
-                }
-
-            }
-        }
-
-        // unsupported file type
-        return false;
+        return $dir;
     }
 
     /**
      * Checks the mime type and fixes the permission and filenames of the
      * extracted files and sends a notification email per uploaded file
      *
+     * @param string $source temporary directory where the files where unpacked to
+     * @param string $namespace media namespace where the files should go to
      * @author Michael Klier <chi@chimeric.de>
      */
-    protected function postProcessFiles($dir, $files)
+    protected function postProcessFiles($source, $namespace)
     {
         global $conf;
-        global $lang;
+        if ($namespace === false) $namespace = '';
 
-        require_once(DOKU_INC . 'inc/media.php');
-        $reldir = preg_replace("#" . $conf['mediadir'] . "#", '/', $dir) . '/';
+        /** @var \RecursiveDirectoryIterator $iterator */
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($source, \RecursiveDirectoryIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
 
-        // get filetype regexp
-        $types = array_keys(getMimeTypes());
-        $types = array_map(create_function('$q', 'return preg_quote($q,"/");'), $types);
-        $regex = join('|', $types);
-
-        $dirs = array();
-        $tmp_dirs = array();
-
-        foreach ($files as $file) {
-            $fn_old = $file->getPath();                                // original filename
-            $fn_new = str_replace('/', ':', $fn_old);                     // target filename
-            $fn_new = str_replace(':', '/', cleanID($fn_new));
-
-            if ($file->getIsdir()) {
-                // given file is a directory
-                io_mkdir_p($dir . '/' . $fn_new);
-                chmod($dir . '/' . $fn_new, $conf['dmode']);
-                array_push($dirs, $dir . '/' . $fn_new);
-                array_push($tmp_dirs, $this->tmpdir . '/' . $fn_old);
-            } else {
-                list($ext, $imime) = mimetype($this->tmpdir . '/' . $fn_old);
-
-                if (preg_match('/\.(' . $regex . ')$/i', $fn_old)) {
-                    // check for overwrite
-                    if (@file_exists($dir . '/' . $fn_new) && (!$_POST['ow'] || $auth < AUTH_DELETE)) {
-                        msg($lang['uploadexist'], 0);
-                        continue;
-                    }
-
-                    // check for valid content
-                    $ok = media_contentcheck($this->tmpdir . '/' . $fn_old, $imime);
-                    if ($ok == -1) {
-                        msg(sprintf($lang['uploadbadcontent'], ".$ext"), -1);
-                        unlink($this->tmpdir . '/' . $fn_old);
-                        continue;
-                    } elseif ($ok == -2) {
-                        msg($lang['uploadspam'], -1);
-                        unlink($this->tmpdir . '/' . $fn_old);
-                        continue;
-                    } elseif ($ok == -3) {
-                        msg($lang['uploadxss'], -1);
-                        unlink($this->tmpdir . '/' . $fn_old);
-                        continue;
-                    }
-
-                    // everything's ok - lets move the file
-                    // FIXME check for success ??
-                    rename($this->tmpdir . '/' . $fn_old, $dir . '/' . $fn_new);
-                    chmod($dir . '/' . $fn_new, $conf['fmode']);
-
-                    // send notification mail
-                    $id = cleanID(str_replace('/', ':', $reldir . '/' . $fn_new));
-                    media_notify($id, $dir . '/' . $fn_new, $imime);
-                    msg($lang['uploadsucc'], 1);
-
-                } else {
-                    msg($lang['uploadwrong'], -1);
-                    @unlink($this->tmpdir . '/' . $fn_old);
-                    continue;
-                }
+        foreach ($iterator as $item) {
+            if ($item->isDir()) {
+                continue; // we handle only files and create namespace dirs only when needed
             }
-        }
 
-        // done - remove eventually left over empty dirs in destination directory
-        natsort($dirs);
-        $dirs = array_reverse($dirs);
-        foreach ($dirs as $dir) {
-            @rmdir($dir);
-        }
-
-        // do the same for the tmp dir
-        natsort($tmp_dirs);
-        $dirs = array_reverse($tmp_dirs);
-        foreach ($dirs as $dir) {
-            @rmdir($dir);
+            $id = $namespace . ':' . str_replace('/', ':', $iterator->getSubPathName());
+            $id = cleanID($id);
+            $fn = mediaFN($id);
+            list(, $mime) = mimetype($fn);
+            if ($mime === false) continue; // unknown file type
+            if (!media_contentcheck($item, $mime)) continue; // bad file
+            copy($item, $fn);
+            chmod($fn, $conf['fmode']);
+            media_notify($id, $fn, $mime);
+            // FIXME writing some meta data here would be good
         }
     }
 }
